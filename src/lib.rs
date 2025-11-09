@@ -47,16 +47,16 @@
 //! dlls from your Vcpkg installation to be available in your path.
 //!
 //! ## WASM 32
-//! 
+//!
 //! At this time, vcpkg has a single triplet for wasm32, wasm32-emscripten,
 //! while rust has several targets for wasm32.
 //! Currently all of these targets are mapped to wasm32-emscripten triplet.
-//! 
+//!
 //! You can open an [issue](https://github.com/mcgoo/vcpkg-rs/issue)
-//! if more wasm32 triplets come to vcpkg. 
-//! And just like other target, it is possibleto select a custom triplet 
+//! if more wasm32 triplets come to vcpkg.
+//! And just like other target, it is possibleto select a custom triplet
 //! using the `VCPKGRS_TRIPLET` environment variable.
-//! 
+//!
 //! # Environment variables
 //!
 //! A number of environment variables are available to globally configure which
@@ -108,16 +108,11 @@
 // rust-openssl's openssl-sys was backward compatible when this crate originally released.
 //
 // This will likely get bumped by the next major release.
-#![allow(deprecated)]
-#![allow(warnings)]
+// #![allow(deprecated)]
+// #![allow(warnings)]
 
 #[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
-
-#[allow(unused_imports)]
-use std::ascii::AsciiExt;
-
+use lazy_static::lazy_static;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::env;
@@ -257,11 +252,8 @@ impl error::Error for Error {
         }
     }
 
-    fn cause(&self) -> Option<&error::Error> {
-        match *self {
-            // Error::Command { ref cause, .. } => Some(cause),
-            _ => None,
-        }
+    fn cause(&self) -> Option<&dyn error::Error> {
+        None
     }
 }
 
@@ -309,7 +301,7 @@ pub fn find_package(package: &str) -> Result<Library, Error> {
 #[doc(hidden)]
 pub fn find_vcpkg_root(cfg: &Config) -> Result<PathBuf, Error> {
     // prefer the setting from the use if there is one
-    if let &Some(ref path) = &cfg.vcpkg_root {
+    if let Some(path) = &cfg.vcpkg_root {
         return Ok(path.clone());
     }
 
@@ -329,10 +321,12 @@ pub fn find_vcpkg_root(cfg: &Config) -> Result<PathBuf, Error> {
             let file = BufReader::new(&file);
 
             for line in file.lines() {
-                let line = try!(line.map_err(|_| Error::VcpkgNotFound(format!(
-                    "Parsing of {} failed.",
-                    vcpkg_user_targets_path.to_string_lossy().to_owned()
-                ))));
+                let line = line.map_err(|_| {
+                    Error::VcpkgNotFound(format!(
+                        "Parsing of {} failed.",
+                        vcpkg_user_targets_path.to_string_lossy().to_owned()
+                    ))
+                })?;
                 let mut split = line.split("Project=\"");
                 split.next(); // eat anything before Project="
                 if let Some(found) = split.next() {
@@ -407,8 +401,8 @@ fn validate_vcpkg_root(path: &PathBuf) -> Result<(), Error> {
 }
 
 fn find_vcpkg_target(cfg: &Config, target_triplet: &TargetTriplet) -> Result<VcpkgTarget, Error> {
-    let vcpkg_root = try!(find_vcpkg_root(&cfg));
-    try!(validate_vcpkg_root(&vcpkg_root));
+    let vcpkg_root = find_vcpkg_root(cfg)?;
+    validate_vcpkg_root(&vcpkg_root)?;
 
     let mut base = cfg
         .vcpkg_installed_root
@@ -426,11 +420,11 @@ fn find_vcpkg_target(cfg: &Config, target_triplet: &TargetTriplet) -> Result<Vcp
     let packages_path = vcpkg_root.join("packages");
 
     Ok(VcpkgTarget {
-        lib_path: lib_path,
-        bin_path: bin_path,
-        include_path: include_path,
-        status_path: status_path,
-        packages_path: packages_path,
+        lib_path,
+        bin_path,
+        include_path,
+        status_path,
+        packages_path,
         target_triplet: target_triplet.clone(),
     })
 }
@@ -448,21 +442,22 @@ struct PcFile {
 impl PcFile {
     fn parse_pc_file(vcpkg_target: &VcpkgTarget, path: &Path) -> Result<Self, Error> {
         // Extract the pkg-config name.
-        let id = try!(path
+        let id = path
             .file_stem()
-            .ok_or_else(|| Error::VcpkgInstallation(format!(
-                "pkg-config file {} has bogus name",
-                path.to_string_lossy()
-            ))))
-        .to_string_lossy();
+            .ok_or_else(|| {
+                Error::VcpkgInstallation(format!(
+                    "pkg-config file {} has bogus name",
+                    path.to_string_lossy()
+                ))
+            })?
+            .to_string_lossy();
         // Read through the file and gather what we want.
-        let mut file = try!(File::open(path)
-            .map_err(|_| Error::VcpkgInstallation(format!("Couldn't open {}", path.display()))));
+        let mut file = File::open(path)
+            .map_err(|_| Error::VcpkgInstallation(format!("Couldn't open {}", path.display())))?;
         let mut pc_file_contents = String::new();
 
-        try!(file
-            .read_to_string(&mut pc_file_contents)
-            .map_err(|_| Error::VcpkgInstallation(format!("Couldn't read {}", path.display()))));
+        file.read_to_string(&mut pc_file_contents)
+            .map_err(|_| Error::VcpkgInstallation(format!("Couldn't read {}", path.display())))?;
         PcFile::from_str(&id, &pc_file_contents, &vcpkg_target.target_triplet)
     }
     fn from_str(id: &str, s: &str, target_triplet: &TargetTriplet) -> Result<Self, Error> {
@@ -474,28 +469,22 @@ impl PcFile {
             if line.starts_with("Requires:") {
                 let mut requires_args = line
                     .split(":")
-                    .skip(1)
-                    .next()
+                    .nth(1)
                     .unwrap_or("")
                     .split_whitespace()
                     .flat_map(|e| e.split(","))
-                    .filter(|s| *s != "");
+                    .filter(|s| !s.is_empty());
                 while let Some(dep) = requires_args.next() {
                     // Drop any versioning requirements, we only care about library order and rely upon
                     // port dependencies to resolve versioning.
-                    if let Some(_) = dep.find(|c| c == '=' || c == '<' || c == '>') {
+                    if dep.find(['=', '<', '>']).is_some() {
                         requires_args.next();
                         continue;
                     }
                     deps.push(dep.to_owned());
                 }
             } else if line.starts_with("Libs:") {
-                let lib_flags = line
-                    .split(":")
-                    .skip(1)
-                    .next()
-                    .unwrap_or("")
-                    .split_whitespace();
+                let lib_flags = line.split(":").nth(1).unwrap_or("").split_whitespace();
                 for lib_flag in lib_flags {
                     if lib_flag.starts_with("-l") {
                         // reconstruct the library name.
@@ -506,7 +495,7 @@ impl PcFile {
                             } else {
                                 ""
                             },
-                            lib_flag.trim_left_matches("-l"),
+                            lib_flag.trim_start_matches("-l"),
                             target_triplet.lib_suffix
                         );
                         libs.push(lib);
@@ -517,8 +506,8 @@ impl PcFile {
 
         Ok(PcFile {
             id: id.to_string(),
-            libs: libs,
-            deps: deps,
+            libs,
+            deps,
         })
     }
 }
@@ -531,28 +520,28 @@ struct PcFiles {
 impl PcFiles {
     fn load_pkgconfig_dir(vcpkg_target: &VcpkgTarget, path: &PathBuf) -> Result<Self, Error> {
         let mut files = HashMap::new();
-        for dir_entry in try!(path.read_dir().map_err(|e| {
+        for dir_entry in path.read_dir().map_err(|e| {
             Error::VcpkgInstallation(format!(
                 "Missing pkgconfig directory {}: {}",
                 path.to_string_lossy(),
                 e
             ))
-        })) {
-            let dir_entry = try!(dir_entry.map_err(|e| {
+        })? {
+            let dir_entry = dir_entry.map_err(|e| {
                 Error::VcpkgInstallation(format!(
                     "Troubling reading pkgconfig dir {}: {}",
                     path.to_string_lossy(),
                     e
                 ))
-            }));
+            })?;
             // Only look at .pc files.
             if dir_entry.path().extension() != Some(OsStr::new("pc")) {
                 continue;
             }
-            let pc_file = try!(PcFile::parse_pc_file(vcpkg_target, &dir_entry.path()));
+            let pc_file = PcFile::parse_pc_file(vcpkg_target, &dir_entry.path())?;
             files.insert(pc_file.id.to_owned(), pc_file);
         }
-        Ok(PcFiles { files: files })
+        Ok(PcFiles { files })
     }
     /// Use the .pc files as a hint to the library sort order.
     fn fix_ordering(&self, mut libs: Vec<String>) -> Vec<String> {
@@ -600,12 +589,10 @@ impl PcFiles {
     }
     /// Locate which PcFile contains this library, if any.
     fn locate_pc_file_by_lib(&self, lib: &str) -> Option<&PcFile> {
-        for (id, pc_file) in &self.files {
-            if pc_file.libs.contains(&lib.to_owned()) {
-                return Some(pc_file);
-            }
-        }
-        None
+        self.files
+            .values()
+            .find(|&pc_file| pc_file.libs.contains(&lib.to_owned()))
+            .map(|v| v as _)
     }
 }
 
@@ -635,12 +622,12 @@ fn load_port_manifest(
     let mut dlls = Vec::new();
     let mut libs = Vec::new();
 
-    let f = try!(
-        File::open(&manifest_file).map_err(|_| Error::VcpkgInstallation(format!(
+    let f = File::open(&manifest_file).map_err(|_| {
+        Error::VcpkgInstallation(format!(
             "Could not open port manifest file {}",
             manifest_file.display()
-        )))
-    );
+        ))
+    })?;
 
     let file = BufReader::new(&f);
 
@@ -658,16 +645,16 @@ fn load_port_manifest(
             {
                 // match "mylib.dll" but not "debug/mylib.dll" or "manual_link/mylib.dll"
 
-                dll.to_str().map(|s| dlls.push(s.to_owned()));
-            }
-        } else if let Ok(lib) = file_path.strip_prefix(&lib_prefix) {
-            if lib.extension() == Some(OsStr::new(&vcpkg_target.target_triplet.lib_suffix))
-                && lib.components().collect::<Vec<_>>().len() == 1
-            {
-                if let Some(lib) = vcpkg_target.link_name_for_lib(lib) {
-                    libs.push(lib);
+                if let Some(s) = dll.to_str() {
+                    dlls.push(s.to_owned())
                 }
             }
+        } else if let Ok(lib) = file_path.strip_prefix(&lib_prefix)
+            && lib.extension() == Some(OsStr::new(&vcpkg_target.target_triplet.lib_suffix))
+            && lib.components().collect::<Vec<_>>().len() == 1
+            && let Some(lib) = vcpkg_target.link_name_for_lib(lib)
+        {
+            libs.push(lib);
         }
     }
 
@@ -691,13 +678,13 @@ fn load_port_file(
     filename: &PathBuf,
     port_info: &mut Vec<BTreeMap<String, String>>,
 ) -> Result<(), Error> {
-    let f = try!(
-        File::open(&filename).map_err(|e| Error::VcpkgInstallation(format!(
+    let f = File::open(filename).map_err(|e| {
+        Error::VcpkgInstallation(format!(
             "Could not open status file at {}: {}",
             filename.display(),
             e
-        )))
-    );
+        ))
+    })?;
     let file = BufReader::new(&f);
     let mut current: BTreeMap<String, String> = BTreeMap::new();
     for line in file.lines() {
@@ -706,7 +693,7 @@ fn load_port_file(
         if parts.len() == 2 {
             // a key: value line
             current.insert(parts[0].trim().into(), parts[1].trim().into());
-        } else if line.len() == 0 {
+        } else if line.is_empty() {
             // end of section
             port_info.push(current.clone());
             current.clear();
@@ -745,16 +732,16 @@ fn load_ports(target: &VcpkgTarget) -> Result<BTreeMap<String, Port>, Error> {
     // load updates to the status file that have yet to be normalized
     let status_update_dir = target.status_path.join("updates");
 
-    let paths = try!(
-        fs::read_dir(&status_update_dir).map_err(|e| Error::VcpkgInstallation(format!(
+    let paths = fs::read_dir(&status_update_dir).map_err(|e| {
+        Error::VcpkgInstallation(format!(
             "could not read status file updates dir ({}): {}",
             status_update_dir.display(),
             e
-        )))
-    );
+        ))
+    })?;
 
     // get all of the paths of the update files into a Vec<PathBuf>
-    let mut paths = try!(paths
+    let mut paths = paths
         .map(|rde| rde.map(|de| de.path())) // Result<DirEntry, io::Error> -> Result<PathBuf, io::Error>
         .collect::<Result<Vec<_>, _>>() // collect into Result<Vec<PathBuf>, io::Error>
         .map_err(|e| {
@@ -762,7 +749,7 @@ fn load_ports(target: &VcpkgTarget) -> Result<BTreeMap<String, Port>, Error> {
                 "could not read status file update filenames: {}",
                 e
             ))
-        }));
+        })?;
 
     // Sort the paths and read them. This could be done directly from the iterator if
     // read_dir() guarantees that the files will be read in alpha order but that appears
@@ -771,22 +758,19 @@ fn load_ports(target: &VcpkgTarget) -> Result<BTreeMap<String, Port>, Error> {
     paths.sort();
     for path in paths {
         //       println!("Name: {}", path.display());
-        try!(load_port_file(&path, &mut port_info));
+        load_port_file(&path, &mut port_info)?;
     }
     //println!("{:#?}", port_info);
 
     let mut seen_names = BTreeMap::new();
     for current in &port_info {
         // store them by name and arch, clobbering older details
-        match (
+        if let (Some(pkg), Some(arch), feature) = (
             current.get("Package"),
             current.get("Architecture"),
             current.get("Feature"),
         ) {
-            (Some(pkg), Some(arch), feature) => {
-                seen_names.insert((pkg, arch, feature), current);
-            }
-            _ => {}
+            seen_names.insert((pkg, arch, feature), current);
         }
     }
 
@@ -806,16 +790,12 @@ fn load_ports(target: &VcpkgTarget) -> Result<BTreeMap<String, Port>, Error> {
                 match (current.get("Version"), feature) {
                     (Some(version), _) => {
                         // this failing here and bailing out causes everything to fail
-                        let lib_info = try!(load_port_manifest(
-                            &target.status_path,
-                            &name,
-                            version,
-                            &target
-                        ));
+                        let lib_info =
+                            load_port_manifest(&target.status_path, name, version, target)?;
                         let port = Port {
                             dlls: lib_info.0,
                             libs: lib_info.1,
-                            deps: deps,
+                            deps,
                         };
 
                         ports.insert(name.to_string(), port);
@@ -885,7 +865,7 @@ impl Config {
             let target = if let Ok(triplet_str) = env::var("VCPKGRS_TRIPLET") {
                 triplet_str.into()
             } else {
-                try!(detect_target_triplet())
+                detect_target_triplet()?
             };
             self.target = Some(target);
         }
@@ -904,7 +884,7 @@ impl Config {
     pub fn find_package(&mut self, port_name: &str) -> Result<Library, Error> {
         // determine the target type, bailing out if it is not some
         // kind of msvc
-        let msvc_target = try!(self.get_target_triplet());
+        let msvc_target = self.get_target_triplet()?;
 
         // bail out if requested to not try at all
         if env::var_os("VCPKGRS_DISABLE").is_some() {
@@ -928,13 +908,13 @@ impl Config {
             return Err(Error::DisabledByEnv(abort_var_name));
         }
 
-        let vcpkg_target = try!(find_vcpkg_target(&self, &msvc_target));
+        let vcpkg_target = find_vcpkg_target(self, &msvc_target)?;
         let mut required_port_order = Vec::new();
 
         // if no overrides have been selected, then the Vcpkg port name
         // is the the .lib name and the .dll name
         if self.required_libs.is_empty() {
-            let ports = try!(load_ports(&vcpkg_target));
+            let ports = load_ports(&vcpkg_target)?;
 
             if !ports.contains_key(port_name) {
                 return Err(Error::LibNotFound(format!(
@@ -951,9 +931,7 @@ impl Config {
             //        ports_to_scan.insert(port_name.to_owned());
             let mut ports_to_scan = vec![port_name.to_owned()]; //: Vec<String> = BTreeSet::new();
 
-            while !ports_to_scan.is_empty() {
-                let port_name = ports_to_scan.pop().unwrap();
-
+            while let Some(port_name) = ports_to_scan.pop() {
                 if required_ports.contains_key(&port_name) {
                     continue;
                 }
@@ -1008,7 +986,7 @@ impl Config {
         // require explicit opt-in before using dynamically linked
         // variants, otherwise cargo install of various things will
         // stop working if Vcpkg is installed.
-        if !vcpkg_target.target_triplet.is_static && !env::var_os("VCPKGRS_DYNAMIC").is_some() {
+        if !vcpkg_target.target_triplet.is_static && env::var_os("VCPKGRS_DYNAMIC").is_none() {
             return Err(Error::RequiredEnvMissing("VCPKGRS_DYNAMIC".to_owned()));
         }
 
@@ -1047,10 +1025,10 @@ impl Config {
 
         lib.ports = required_port_order;
 
-        try!(self.emit_libs(&mut lib, &vcpkg_target));
+        self.emit_libs(&mut lib, &vcpkg_target)?;
 
         if self.copy_dlls {
-            try!(self.do_dll_copy(&mut lib));
+            self.do_dll_copy(&mut lib)?;
         }
 
         if self.cargo_metadata {
@@ -1116,7 +1094,7 @@ impl Config {
     pub fn probe(&mut self, port_name: &str) -> Result<Library, Error> {
         // determine the target type, bailing out if it is not some
         // kind of msvc
-        let msvc_target = try!(self.get_target_triplet());
+        let msvc_target = self.get_target_triplet()?;
 
         // bail out if requested to not try at all
         if env::var_os("VCPKGRS_DISABLE").is_some() {
@@ -1147,12 +1125,12 @@ impl Config {
             self.required_dlls.push(port_name.to_owned());
         }
 
-        let vcpkg_target = try!(find_vcpkg_target(&self, &msvc_target));
+        let vcpkg_target = find_vcpkg_target(self, &msvc_target)?;
 
         // require explicit opt-in before using dynamically linked
         // variants, otherwise cargo install of various things will
         // stop working if Vcpkg is installed.
-        if !vcpkg_target.target_triplet.is_static && !env::var_os("VCPKGRS_DYNAMIC").is_some() {
+        if !vcpkg_target.target_triplet.is_static && env::var_os("VCPKGRS_DYNAMIC").is_none() {
             return Err(Error::RequiredEnvMissing("VCPKGRS_DYNAMIC".to_owned()));
         }
 
@@ -1189,10 +1167,10 @@ impl Config {
             lib.dll_paths.push(vcpkg_target.bin_path.clone());
         }
 
-        try!(self.emit_libs(&mut lib, &vcpkg_target));
+        self.emit_libs(&mut lib, &vcpkg_target)?;
 
         if self.copy_dlls {
-            try!(self.do_dll_copy(&mut lib));
+            self.do_dll_copy(&mut lib)?;
         }
 
         if self.cargo_metadata {
@@ -1209,7 +1187,7 @@ impl Config {
             // not necessary to make the distinction for windows-msvc.
 
             let link_name = match vcpkg_target.target_triplet.strip_lib_prefix {
-                true => required_lib.trim_left_matches("lib"),
+                true => required_lib.trim_start_matches("lib"),
                 false => required_lib,
             };
 
@@ -1250,13 +1228,13 @@ impl Config {
                 for file in &lib.found_dlls {
                     let mut dest_path = Path::new(target_dir.as_os_str()).to_path_buf();
                     dest_path.push(Path::new(file.file_name().unwrap()));
-                    try!(
-                        fs::copy(file, &dest_path).map_err(|_| Error::LibNotFound(format!(
+                    fs::copy(file, &dest_path).map_err(|_| {
+                        Error::LibNotFound(format!(
                             "Can't copy file {} to {}",
                             file.to_string_lossy(),
                             dest_path.to_string_lossy()
-                        )))
-                    );
+                        ))
+                    })?;
                     println!(
                         "vcpkg build helper copied {} to {}",
                         file.to_string_lossy(),
@@ -1311,10 +1289,9 @@ impl Config {
 }
 
 fn remove_item(cont: &mut Vec<String>, item: &String) -> Option<String> {
-    match cont.iter().position(|x| *x == *item) {
-        Some(pos) => Some(cont.remove(pos)),
-        None => None,
-    }
+    cont.iter()
+        .position(|x| *x == *item)
+        .map(|pos| cont.remove(pos))
 }
 
 impl Library {
@@ -1324,7 +1301,7 @@ impl Library {
             dll_paths: Vec::new(),
             include_paths: Vec::new(),
             cargo_metadata: Vec::new(),
-            is_static: is_static,
+            is_static,
             found_dlls: Vec::new(),
             found_libs: Vec::new(),
             found_names: Vec::new(),
@@ -1343,9 +1320,9 @@ fn envify(name: &str) -> String {
 
 fn detect_target_triplet() -> Result<TargetTriplet, Error> {
     let is_definitely_dynamic = env::var("VCPKGRS_DYNAMIC").is_ok();
-    let target = env::var("TARGET").unwrap_or(String::new());
+    let target = env::var("TARGET").unwrap_or_default();
     let is_static = env::var("CARGO_CFG_TARGET_FEATURE")
-        .unwrap_or(String::new()) // rustc 1.10
+        .unwrap_or_default() // rustc 1.10
         .contains("crt-static");
     if target == "x86_64-apple-darwin" {
         Ok(TargetTriplet {
@@ -1459,13 +1436,10 @@ fn detect_target_triplet() -> Result<TargetTriplet, Error> {
 
 #[cfg(test)]
 mod tests {
-
-    extern crate tempfile;
-
-    use self::tempfile::tempdir;
     use super::*;
     use std::env;
     use std::sync::Mutex;
+    use tempfile::tempdir;
 
     lazy_static! {
         static ref LOCK: Mutex<()> = Mutex::new(());
@@ -1474,44 +1448,48 @@ mod tests {
     #[test]
     fn do_nothing_for_unsupported_target() {
         let _g = LOCK.lock();
-        env::set_var("VCPKG_ROOT", "/");
-        env::set_var("TARGET", "x86_64-pc-windows-gnu");
-        assert!(match ::probe_package("foo") {
-            Err(Error::NotMSVC) => true,
-            _ => false,
-        });
+        unsafe {
+            env::set_var("VCPKG_ROOT", "/");
+            env::set_var("TARGET", "x86_64-pc-windows-gnu");
+            assert!(match probe_package("foo") {
+                Err(Error::NotMSVC) => true,
+                _ => false,
+            });
 
-        env::set_var("TARGET", "x86_64-pc-windows-gnu");
-        assert_eq!(env::var("TARGET"), Ok("x86_64-pc-windows-gnu".to_string()));
-        assert!(match ::probe_package("foo") {
-            Err(Error::NotMSVC) => true,
-            _ => false,
-        });
-        env::remove_var("TARGET");
-        env::remove_var("VCPKG_ROOT");
+            env::set_var("TARGET", "x86_64-pc-windows-gnu");
+            assert_eq!(env::var("TARGET"), Ok("x86_64-pc-windows-gnu".to_string()));
+            assert!(match probe_package("foo") {
+                Err(Error::NotMSVC) => true,
+                _ => false,
+            });
+            env::remove_var("TARGET");
+            env::remove_var("VCPKG_ROOT");
+        }
     }
 
     #[test]
     fn do_nothing_for_bailout_variables_set() {
         let _g = LOCK.lock();
-        env::set_var("VCPKG_ROOT", "/");
-        env::set_var("TARGET", "x86_64-pc-windows-msvc");
+        unsafe {
+            env::set_var("VCPKG_ROOT", "/");
+            env::set_var("TARGET", "x86_64-pc-windows-msvc");
 
-        for &var in &[
-            "VCPKGRS_DISABLE",
-            "VCPKGRS_NO_FOO",
-            "FOO_NO_VCPKG",
-            "NO_VCPKG",
-        ] {
-            env::set_var(var, "1");
-            assert!(match ::probe_package("foo") {
-                Err(Error::DisabledByEnv(ref v)) if v == var => true,
-                _ => false,
-            });
-            env::remove_var(var);
+            for &var in &[
+                "VCPKGRS_DISABLE",
+                "VCPKGRS_NO_FOO",
+                "FOO_NO_VCPKG",
+                "NO_VCPKG",
+            ] {
+                env::set_var(var, "1");
+                assert!(match probe_package("foo") {
+                    Err(Error::DisabledByEnv(ref v)) if v == var => true,
+                    _ => false,
+                });
+                env::remove_var(var);
+            }
+            env::remove_var("TARGET");
+            env::remove_var("VCPKG_ROOT");
         }
-        env::remove_var("TARGET");
-        env::remove_var("VCPKG_ROOT");
     }
 
     // these tests are good but are leaning on a real vcpkg installation
@@ -1534,20 +1512,22 @@ mod tests {
     fn static_build_finds_lib() {
         let _g = LOCK.lock();
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "x86_64-pc-windows-msvc");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "x86_64-pc-windows-msvc");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
 
-        // CARGO_CFG_TARGET_FEATURE is set in response to
-        // RUSTFLAGS=-Ctarget-feature=+crt-static. It would
-        //  be nice to test that also.
-        env::set_var("CARGO_CFG_TARGET_FEATURE", "crt-static");
-        println!("Result is {:?}", ::find_package("libmysql"));
-        assert!(match ::find_package("libmysql") {
-            Ok(_) => true,
-            _ => false,
-        });
+            // CARGO_CFG_TARGET_FEATURE is set in response to
+            // RUSTFLAGS=-Ctarget-feature=+crt-static. It would
+            //  be nice to test that also.
+            env::set_var("CARGO_CFG_TARGET_FEATURE", "crt-static");
+            println!("Result is {:?}", find_package("libmysql"));
+            assert!(match find_package("libmysql") {
+                Ok(_) => true,
+                _ => false,
+            });
+        }
         clean_env();
     }
 
@@ -1555,14 +1535,16 @@ mod tests {
     fn dynamic_build_finds_lib() {
         let _g = LOCK.lock();
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("no-status"));
-        env::set_var("TARGET", "x86_64-pc-windows-msvc");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("no-status"));
+            env::set_var("TARGET", "x86_64-pc-windows-msvc");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
+        }
 
-        println!("Result is {:?}", ::find_package("libmysql"));
-        assert!(match ::find_package("libmysql") {
+        println!("Result is {:?}", find_package("libmysql"));
+        assert!(match find_package("libmysql") {
             Ok(_) => true,
             _ => false,
         });
@@ -1573,14 +1555,15 @@ mod tests {
     fn handle_multiline_description() {
         let _g = LOCK.lock();
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("multiline-description"));
-        env::set_var("TARGET", "i686-pc-windows-msvc");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
-
-        println!("Result is {:?}", ::find_package("graphite2"));
-        assert!(match ::find_package("graphite2") {
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("multiline-description"));
+            env::set_var("TARGET", "i686-pc-windows-msvc");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
+        }
+        println!("Result is {:?}", find_package("graphite2"));
+        assert!(match find_package("graphite2") {
             Ok(_) => true,
             _ => false,
         });
@@ -1591,14 +1574,15 @@ mod tests {
     fn link_libs_required_by_optional_features() {
         let _g = LOCK.lock();
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "i686-pc-windows-msvc");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
-
-        println!("Result is {:?}", ::find_package("harfbuzz"));
-        assert!(match ::find_package("harfbuzz") {
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "i686-pc-windows-msvc");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
+        }
+        println!("Result is {:?}", find_package("harfbuzz"));
+        assert!(match find_package("harfbuzz") {
             Ok(lib) => lib
                 .cargo_metadata
                 .iter()
@@ -1620,14 +1604,15 @@ mod tests {
             //    "x86_64-unknown-linux-gnu",
         ] {
             clean_env();
-            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-            env::set_var("TARGET", target);
-            env::set_var("VCPKGRS_DYNAMIC", "1");
-            let tmp_dir = tempdir().unwrap();
-            env::set_var("OUT_DIR", tmp_dir.path());
-
-            println!("Result is {:?}", ::find_package("harfbuzz"));
-            assert!(match ::find_package("harfbuzz") {
+            unsafe {
+                env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+                env::set_var("TARGET", target);
+                env::set_var("VCPKGRS_DYNAMIC", "1");
+                let tmp_dir = tempdir().unwrap();
+                env::set_var("OUT_DIR", tmp_dir.path());
+            }
+            println!("Result is {:?}", find_package("harfbuzz"));
+            assert!(match find_package("harfbuzz") {
                 Ok(lib) => lib
                     .cargo_metadata
                     .iter()
@@ -1643,13 +1628,14 @@ mod tests {
     fn link_dependencies_after_port() {
         let _g = LOCK.lock();
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "i686-pc-windows-msvc");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
-
-        let lib = ::find_package("harfbuzz").unwrap();
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "i686-pc-windows-msvc");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
+        }
+        let lib = find_package("harfbuzz").unwrap();
 
         check_before(&lib, "freetype", "zlib");
         check_before(&lib, "freetype", "bzip2");
@@ -1684,13 +1670,14 @@ mod tests {
         let _g = LOCK.lock();
 
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "aarch64-apple-ios");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
-
-        let harfbuzz = ::Config::new()
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "aarch64-apple-ios");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
+        }
+        let harfbuzz = Config::new()
             // For the sake of testing, force this build to try to
             // link to the arm64-osx libraries in preference to the
             // default of arm64-ios.
@@ -1707,20 +1694,22 @@ mod tests {
         let _g = LOCK.lock();
 
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "aarch64-apple-doesnotexist");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "aarch64-apple-doesnotexist");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
 
-        let harfbuzz = ::find_package("harfbuzz");
-        println!("Result with inference is {:?}", &harfbuzz);
-        assert!(harfbuzz.is_err());
+            let harfbuzz = find_package("harfbuzz");
+            println!("Result with inference is {:?}", &harfbuzz);
+            assert!(harfbuzz.is_err());
 
-        env::set_var("VCPKGRS_TRIPLET", "x64-osx");
-        let harfbuzz = ::find_package("harfbuzz").unwrap();
-        println!("Result with setting VCPKGRS_TRIPLET is {:?}", &harfbuzz);
-        assert_eq!(harfbuzz.vcpkg_triplet, "x64-osx");
+            env::set_var("VCPKGRS_TRIPLET", "x64-osx");
+            let harfbuzz = find_package("harfbuzz").unwrap();
+            println!("Result with setting VCPKGRS_TRIPLET is {:?}", &harfbuzz);
+            assert_eq!(harfbuzz.vcpkg_triplet, "x64-osx");
+        }
         clean_env();
     }
 
@@ -1729,20 +1718,22 @@ mod tests {
         let _g = LOCK.lock();
 
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "aarch64-apple-ios");
-        env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "aarch64-apple-ios");
+            env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
 
-        let harfbuzz = ::find_package("harfbuzz").unwrap();
-        println!("Result with inference is {:?}", &harfbuzz);
-        assert_eq!(harfbuzz.vcpkg_triplet, "arm64-ios");
+            let harfbuzz = find_package("harfbuzz").unwrap();
+            println!("Result with inference is {:?}", &harfbuzz);
+            assert_eq!(harfbuzz.vcpkg_triplet, "arm64-ios");
 
-        env::set_var("VCPKGRS_TRIPLET", "x64-osx");
-        let harfbuzz = ::find_package("harfbuzz").unwrap();
-        println!("Result with setting VCPKGRS_TRIPLET is {:?}", &harfbuzz);
-        assert_eq!(harfbuzz.vcpkg_triplet, "x64-osx");
+            env::set_var("VCPKGRS_TRIPLET", "x64-osx");
+            let harfbuzz = find_package("harfbuzz").unwrap();
+            println!("Result with setting VCPKGRS_TRIPLET is {:?}", &harfbuzz);
+            assert_eq!(harfbuzz.vcpkg_triplet, "x64-osx");
+        }
         clean_env();
     }
 
@@ -1754,8 +1745,8 @@ mod tests {
     //     env::set_var("VCPKGRS_DYNAMIC", "1");
     //     env::set_var("VCPKGRS_NO_LIBMYSQL", "1");
 
-    //     println!("Result is {:?}", ::find_package("libmysql"));
-    //     assert!(match ::find_package("libmysql") {
+    //     println!("Result is {:?}", find_package("libmysql"));
+    //     assert!(match find_package("libmysql") {
     //         Err(Error::DisabledByEnv(ref v)) if v == "VCPKGRS_NO_LIBMYSQL" => true,
     //         _ => false,
     //     });
@@ -1770,8 +1761,8 @@ mod tests {
     //     env::set_var("VCPKGRS_DYNAMIC", "1");
     //     env::set_var("VCPKGRS_DISABLE", "1");
 
-    //     println!("Result is {:?}", ::find_package("libmysql"));
-    //     assert!(match ::find_package("libmysql") {
+    //     println!("Result is {:?}", find_package("libmysql"));
+    //     assert!(match find_package("libmysql") {
     //         Err(Error::DisabledByEnv(ref v)) if v == "VCPKGRS_DISABLE" => true,
     //         _ => false,
     //     });
@@ -1782,12 +1773,13 @@ mod tests {
     fn pc_files_reordering() {
         let _g = LOCK.lock();
         clean_env();
-        env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
-        env::set_var("TARGET", "x86_64-unknown-linux-gnu");
-        // env::set_var("VCPKGRS_DYNAMIC", "1");
-        let tmp_dir = tempdir().unwrap();
-        env::set_var("OUT_DIR", tmp_dir.path());
-
+        unsafe {
+            env::set_var("VCPKG_ROOT", vcpkg_test_tree_loc("normalized"));
+            env::set_var("TARGET", "x86_64-unknown-linux-gnu");
+            // env::set_var("VCPKGRS_DYNAMIC", "1");
+            let tmp_dir = tempdir().unwrap();
+            env::set_var("OUT_DIR", tmp_dir.path());
+        }
         let target_triplet = detect_target_triplet().unwrap();
 
         // The brotli use-case.
@@ -1966,14 +1958,16 @@ mod tests {
     }
 
     fn clean_env() {
-        env::remove_var("TARGET");
-        env::remove_var("VCPKG_ROOT");
-        env::remove_var("VCPKGRS_DYNAMIC");
-        env::remove_var("RUSTFLAGS");
-        env::remove_var("CARGO_CFG_TARGET_FEATURE");
-        env::remove_var("VCPKGRS_DISABLE");
-        env::remove_var("VCPKGRS_NO_LIBMYSQL");
-        env::remove_var("VCPKGRS_TRIPLET");
+        unsafe {
+            env::remove_var("TARGET");
+            env::remove_var("VCPKG_ROOT");
+            env::remove_var("VCPKGRS_DYNAMIC");
+            env::remove_var("RUSTFLAGS");
+            env::remove_var("CARGO_CFG_TARGET_FEATURE");
+            env::remove_var("VCPKGRS_DISABLE");
+            env::remove_var("VCPKGRS_NO_LIBMYSQL");
+            env::remove_var("VCPKGRS_TRIPLET");
+        }
     }
 
     // path to a to vcpkg installation to test against
