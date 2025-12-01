@@ -63,21 +63,21 @@
 //! libraries are selected.
 //!
 //! * `VCPKG_ROOT` - Set the directory to look in for a vcpkg root. If
-//! it is not set, vcpkg will use the user-wide installation if one has been
-//! set up with `vcpkg integrate install`, and check the crate source and target
-//! to see if a vcpkg tree has been created by [cargo-vcpkg](https://crates.io/crates/cargo-vcpkg).
+//!   it is not set, vcpkg will use the user-wide installation if one has been
+//!   set up with `vcpkg integrate install`, and check the crate source and target
+//!   to see if a vcpkg tree has been created by [cargo-vcpkg](https://crates.io/crates/cargo-vcpkg).
 //!
 //! * `VCPKG_INSTALLED_ROOT` - Set the directory for the vcpkg installed directory. Corresponding to
-//! `--x-install-root` flag in `vcpkg install` command.
-//! A typical use case is to set it to `vcpkg_installed` directory under build directory
-//! to adapt [manifest mode of vcpkg](https://learn.microsoft.com/en-us/vcpkg/users/manifests).
-//! If set, this will override the default value of `VCPKG_ROOT/installed`.
+//!   `--x-install-root` flag in `vcpkg install` command.
+//!   A typical use case is to set it to `vcpkg_installed` directory under build directory
+//!   to adapt [manifest mode of vcpkg](https://learn.microsoft.com/en-us/vcpkg/users/manifests).
+//!   If set, this will override the default value of `VCPKG_ROOT/installed`.
 //!  
 //! * `VCPKGRS_TRIPLET` - Use this to override vcpkg-rs' default triplet selection with your own.
-//! This is how to select a custom vcpkg triplet.
+//!   This is how to select a custom vcpkg triplet.
 //!
 //! * `VCPKGRS_NO_FOO` - if set, vcpkg-rs will not attempt to find the
-//! library named `foo`.
+//!   library named `foo`.
 //!
 //! * `VCPKGRS_DISABLE` - if set, vcpkg-rs will not attempt to find any libraries.
 //!
@@ -213,6 +213,7 @@ impl<S: AsRef<str>> From<S> for TargetTriplet {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug)] // need Display?
 pub enum Error {
     /// Aborted because of a `VCPKGRS_NO_*` environment variable.
@@ -324,7 +325,7 @@ pub fn find_vcpkg_root(cfg: &Config) -> Result<PathBuf, Error> {
                 let line = line.map_err(|_| {
                     Error::VcpkgNotFound(format!(
                         "Parsing of {} failed.",
-                        vcpkg_user_targets_path.to_string_lossy().to_owned()
+                        vcpkg_user_targets_path.to_string_lossy().clone()
                     ))
                 })?;
                 let mut split = line.split("Project=\"");
@@ -386,8 +387,8 @@ pub fn find_vcpkg_root(cfg: &Config) -> Result<PathBuf, Error> {
     ))
 }
 
-fn validate_vcpkg_root(path: &PathBuf) -> Result<(), Error> {
-    let mut vcpkg_root_path = path.clone();
+fn validate_vcpkg_root(path: &Path) -> Result<(), Error> {
+    let mut vcpkg_root_path = path.to_path_buf();
     vcpkg_root_path.push(".vcpkg-root");
 
     if vcpkg_root_path.exists() {
@@ -518,7 +519,7 @@ struct PcFiles {
     files: HashMap<String, PcFile>,
 }
 impl PcFiles {
-    fn load_pkgconfig_dir(vcpkg_target: &VcpkgTarget, path: &PathBuf) -> Result<Self, Error> {
+    fn load_pkgconfig_dir(vcpkg_target: &VcpkgTarget, path: &Path) -> Result<Self, Error> {
         let mut files = HashMap::new();
         for dir_entry in path.read_dir().map_err(|e| {
             Error::VcpkgInstallation(format!(
@@ -609,7 +610,7 @@ struct Port {
 }
 
 fn load_port_manifest(
-    path: &PathBuf,
+    path: &Path,
     port: &str,
     version: &str,
     vcpkg_target: &VcpkgTarget,
