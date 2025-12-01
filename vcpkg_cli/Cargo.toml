@@ -1,6 +1,7 @@
 [package]
 name = "vcpkg_cli"
-version = "0.2.4"
+version = "0.3.0"
+edition = "2024"
 authors = ["Jim McGrath <jimmc2@gmail.com>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/mcgoo/vcpkg-rs"
@@ -12,5 +13,5 @@ found by the vcpkg Cargo build helper.
 keywords = ["build-dependencies"]
 
 [dependencies]
-vcpkg = { version = "0.2.8", path = "../" }
-clap = "2.31"
+vcpkg = { version = "0.3.0", path = "../" }
+clap = "4.0"

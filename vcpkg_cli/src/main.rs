@@ -1,60 +1,63 @@
-extern crate clap;
 extern crate vcpkg;
 
-use clap::{App, AppSettings, Arg, SubCommand};
+use clap::{Arg, Command};
 use std::env;
 
 fn main() {
-    let app = App::new("vcpkg library finder")
+    let app = Command::new("vcpkg library finder")
         .about("Allows examining what vcpkg will find in a build script")
-        .setting(AppSettings::SubcommandRequired)
+        .subcommand_required(true)
         .arg(
-            Arg::with_name("target")
-                .short("t")
+            Arg::new("target")
+                .short('t')
                 .long("target")
                 .value_name("RUST TARGET TRIPLE")
                 .help("the rust toolchain triple to find libraries for")
-                .takes_value(true)
                 .default_value("x86_64-pc-windows-msvc"),
         )
         .subcommand(
-            SubCommand::with_name("probe")
+            Command::new("probe")
                 .about("try to find a package")
                 .arg(
-                    Arg::with_name("package")
+                    Arg::new("package")
                         .index(1)
                         .required(true)
                         .help("probe for a library and display paths and cargo metadata"),
                 )
                 .arg(
-                    Arg::with_name("linkage")
-                        .short("l")
+                    Arg::new("linkage")
+                        .short('l')
                         .long("linkage")
-                        .takes_value(true)
-                        .possible_values(&["dll", "static"]),
+                        .value_parser(["dll", "static"]),
                 ),
         );
 
     let matches = app.get_matches();
 
     // set TARGET as if we are running under cargo
-    env::set_var("TARGET", matches.value_of("target").unwrap());
+    unsafe {
+        env::set_var("TARGET", matches.get_one::<String>("target").unwrap());
+    }
 
     if let Some(matches) = matches.subcommand_matches("probe") {
-        let lib_name = matches.value_of("package").unwrap();
+        let lib_name = matches.get_one::<String>("package").unwrap().as_str();
 
         let mut cfg = vcpkg::Config::new();
         cfg.cargo_metadata(false);
         cfg.copy_dlls(false);
-        if let Some(linkage) = matches.value_of("linkage") {
-            match linkage {
+        if let Some(linkage) = matches.get_one::<String>("linkage") {
+            match linkage.as_str() {
                 "dll" => {
                     remove_vars();
-                    env::set_var("VCPKGRS_DYNAMIC", "1");
+                    unsafe {
+                        env::set_var("VCPKGRS_DYNAMIC", "1");
+                    }
                 }
                 "static" => {
                     remove_vars();
-                    env::set_var("CARGO_CFG_TARGET_FEATURE", "crt-static");
+                    unsafe {
+                        env::set_var("CARGO_CFG_TARGET_FEATURE", "crt-static");
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -118,6 +121,8 @@ fn main() {
 }
 
 fn remove_vars() {
-    env::remove_var("VCPKGRS_DYNAMIC");
-    env::remove_var("CARGO_CFG_TARGET_FEATURE");
+    unsafe {
+        env::remove_var("VCPKGRS_DYNAMIC");
+        env::remove_var("CARGO_CFG_TARGET_FEATURE");
+    }
 }
